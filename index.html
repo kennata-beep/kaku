@@ -390,26 +390,57 @@
   const micBtn = $("mic"), vmsg = t => $("voiceMsg").textContent = t;
 
   // 「しじゅうご」「五十六」「56」などを数字にする
+  // 九九の答えになる数（1〜81のうち、かけ算で出てくるものだけ）
+  const PRODUCTS = new Set(); for (let a=1;a<=9;a++) for (let b=1;b<=9;b++) PRODUCTS.add(a*b);
+  // 音声認識がよく出す「同じ読みの漢字」を数字に直す表（さ行・し の聞きまちがい対策）
+  const HOMO = [
+    ["始終","4十"],["位置","1"],["市場","4十"],
+    ["十","十"],["重","十"],["銃","十"],["拾","十"],["充","十"],["従","十"],["獣","十"],
+    ["四","4"],["市","4"],["氏","4"],["死","4"],["詩","4"],["師","4"],["士","4"],["紙","4"],["誌","4"],
+    ["史","4"],["司","4"],["志","4"],["視","4"],["詞","4"],["支","4"],["歯","4"],["子","4"],["指","4"],
+    ["七","7"],["質","7"],["室","7"],
+    ["九","9"],["苦","9"],["区","9"],["句","9"],["急","9"],["級","9"],["球","9"],["旧","9"],["救","9"],
+    ["五","5"],["後","5"],["語","5"],["碁","5"],["誤","5"],
+    ["二","2"],["荷","2"],["似","2"],["煮","2"],
+    ["三","3"],["山","3"],["産","3"],["参","3"],["酸","3"],["算","3"],
+    ["六","6"],["録","6"],["八","8"],["鉢","8"],["蜂","8"],["一","1"],["壱","1"],["〇","0"],["零","0"]
+  ];
+  const KANA = [["きゅう","9"],["じゅう","十"],["しち","7"],["よん","4"],["なな","7"],["はち","8"],["はっ","8"],
+    ["ろく","6"],["ろっ","6"],["さん","3"],["いち","1"],["いっ","1"],["ぜろ","0"],["れい","0"],
+    ["にい","2"],["に","2"],["ごお","5"],["ご","5"],["しい","4"],["し","4"],["くう","9"],["く","9"]];
+
+  // 「しじゅうご」「四十五」「始終後」「45」などを数字にする
   function toNumber(text){
-    let s = text.replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0)-0xFEE0)).replace(/\s|、|。/g,"");
+    let s = text.replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0)-0xFEE0))
+                .replace(/[ァ-ン]/g, c => String.fromCharCode(c.charCodeAt(0)-0x60))
+                .replace(/[\s、。,.!?！？ー]/g,"");
     // 「さんく にじゅうしち」のように九九ごと言ったときは、問題の部分をとりのぞく
     if (qs[idx]) { const q = yomi(qs[idx][0], qs[idx][1])[0]; if (s.startsWith(q)) s = s.slice(q.length); }
     if (s.includes("が")) s = s.slice(s.lastIndexOf("が")+1);
-    const m = s.match(/\d+/);
-    if (m) return parseInt(m[0],10);
-    const kana = [["きゅう","9"],["じゅう","十"],["しち","7"],["よん","4"],["なな","7"],["はち","8"],["はっ","8"],
-      ["ろく","6"],["ろっ","6"],["さん","3"],["いち","1"],["いっ","1"],["ぜろ","0"],["れい","0"],["に","2"],["ご","5"],["し","4"],["く","9"]];
-    kana.forEach(([k,v]) => s = s.split(k).join(v));
-    s = s.replace(/[〇零一二三四五六七八九]/g, c => "〇一二三四五六七八九".indexOf(c) >= 0 ? "〇一二三四五六七八九".indexOf(c) : (c==="零"?0:c));
+    s = s.replace(/です|だよ|かな|だ$/g,"");
+    HOMO.forEach(([k,v]) => s = s.split(k).join(v));
+    KANA.forEach(([k,v]) => s = s.split(k).join(v));
     s = s.replace(/[^0-9十]/g,"");
     if (!s) return null;
     if (s.includes("十")) {
-      const [l, r] = s.split("十");
+      const i = s.lastIndexOf("十"), l = s.slice(0,i), r = s.slice(i+1);
       const tens = l === "" ? 1 : parseInt(l.slice(-1),10);
       const ones = r === "" ? 0 : parseInt(r[0],10);
       return tens*10 + ones;
     }
-    return parseInt(s,10);
+    const groups = s.match(/\d+/g), g = groups[groups.length-1];
+    return parseInt(g.length > 2 ? g.slice(-2) : g, 10);
+  }
+  // 候補（maxAlternatives）の中から、九九の答えになりうる数を優先してえらぶ
+  function pickNumber(result){
+    let first = null;
+    for (let i = 0; i < result.length; i++) {
+      const n = toNumber(result[i].transcript);
+      if (n === null) continue;
+      if (PRODUCTS.has(n)) return n;
+      if (first === null) first = n;
+    }
+    return first;
   }
 
   if (!SR) {
@@ -421,12 +452,12 @@
     rec.onstart = () => { listening = true; vmsg("きいているよ… こたえを いってね"); };
     rec.onresult = e => {
       const r = e.results[e.results.length-1];
-      let n = null;
-      for (let i = 0; i < r.length && n === null; i++) n = toNumber(r[i].transcript);
+      const n = pickNumber(r);
       if (n !== null && !locked) { input = String(n).slice(0,2); $("ans").textContent = input; }
       if (r.isFinal && !locked) {
-        if (n === null) vmsg("きこえなかったよ。もういちど いってね");
-        else judge();
+        const heard = r[0].transcript;
+        if (n === null) vmsg("「" + heard + "」と きこえたよ。もういちど いってね");
+        else { vmsg("きこえた ことば：「" + heard + "」"); judge(); }
       }
     };
     rec.onerror = e => {
